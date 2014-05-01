@@ -49,6 +49,7 @@ static zhandle_t **g_zhs;
 
 typedef struct {
   char following;
+  int pos;
 } zh_context;
 
 static void help(void);
@@ -56,11 +57,10 @@ static void parse_argv(int argc, char **argv);
 static int positive_int(const char *str, const char *param_name);
 static void watcher(zhandle_t *zzh, int type, int state, const char *path, void *context);
 static void start_clients(void);
-static zhandle_t *create_client(void);
+static zhandle_t *create_client(int pos);
 static void change_uid(int num);
 static void error(int rc, const char *msgfmt, ...);
 static void warn(const char *msgfmt, ...);
-static int find_handler(zhandle_t *zh);
 
 
 int main(int argc, char **argv)
@@ -159,7 +159,7 @@ static void start_clients(void)
   }
 
   for (j=0; j < g_num_clients; j++) {
-    g_zhs[j] = create_client();
+    g_zhs[j] = create_client(j);
   }
 
   while (1) {
@@ -226,7 +226,7 @@ static void start_clients(void)
   }
 }
 
-static zhandle_t *create_client(void)
+static zhandle_t *create_client(int pos)
 {
   int fd, rc, interest, saved;
   struct epoll_event ev;
@@ -235,6 +235,8 @@ static zhandle_t *create_client(void)
   zh_context *context;
 
   context = safe_alloc(sizeof(zh_context));
+
+  context->pos = pos;
 
   /* try until we succeed */
   while (1) {
@@ -350,14 +352,11 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
     /* Cleanup the expired session */
     zookeeper_close(zzh);
     context = (zh_context *)zoo_get_context(zzh);
+    pos = context->pos;
     free(context);
 
     /* We never give up: create a new session */
-    pos = find_handler(zzh);
-    if (pos < 0)
-      warn("Weird, couldn't find a ZH client, a race perhaps?");
-    else
-      g_zhs[pos] = create_client();
+    g_zhs[pos] = create_client(pos);
   }
 }
 
@@ -437,19 +436,4 @@ static void help(void)
          "  -u                      Switch UID after forking\n"
          "  -z                      ServerSet's path\n",
          program_invocation_short_name);
-}
-
-/*
- * Sorry about this is horrible linear search, but it's not that big to be bothered
- * with a hashtable for now.
- */
-static int find_handler(zhandle_t *zh)
-{
-  int i;
-
-  for (i=0; i < g_num_clients; i++)
-    if (g_zhs[i] == zh)
-      return i;
-
-  return -1;
 }
