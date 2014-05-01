@@ -1,6 +1,6 @@
 /*
  * Local Variables:
- * compile-command: "gcc -Wall -I/tmp/zookeeper-libs/include/zookeeper -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lzookeeper_st zk-follow-server-set.c -o zk-follow-server-set "
+ * compile-command: "gcc -Wall -I/tmp/zookeeper-libs/include/zookeeper -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lpthread -lzookeeper_st zk-follow-server-set.c -o zk-follow-server-set "
  * End:
  */
 
@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <errno.h>
+#include <pthread.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -19,6 +20,7 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <zookeeper.h>
 
@@ -57,6 +59,9 @@ static void parse_argv(int argc, char **argv);
 static int positive_int(const char *str, const char *param_name);
 static void watcher(zhandle_t *zzh, int type, int state, const char *path, void *context);
 static void start_clients(void);
+static void poll_clients(void);
+static void *check_interests(void *data);
+static void do_check_interests(void);
 static zhandle_t *create_client(int pos);
 static void change_uid(int num);
 static void error(int rc, const char *msgfmt, ...);
@@ -95,10 +100,14 @@ int main(int argc, char **argv)
       error(EXIT_SYSTEM_CALL, "Ugh, couldn't fork");
 
     if (!pid) {
+      pthread_t tid;
+
       if (g_switch_uid)
         change_uid(i);
 
       start_clients();
+      pthread_create(&tid, NULL, &check_interests, NULL);
+      poll_clients();
     }
   }
 
@@ -140,16 +149,65 @@ static char * safe_strdup(const char *str)
   return s;
 }
 
-static void start_clients(void)
+static void *check_interests(void *data)
 {
-  int ready, fd, j;
-  int interest, events, rc;
-  int saved;
+  struct timespec req = { 0, 10 * 1000 * 1000 } ; /* 10ms */
+
+  while (1) {
+    do_check_interests();
+    nanosleep(&req, NULL);
+  }
+
+  return NULL;
+}
+
+static void do_check_interests(void)
+{
+  int j, fd, rc, interest, saved;
   struct epoll_event ev;
-  struct epoll_event *evlist;
   struct timeval tv;
 
-  evlist = (struct epoll_event *)safe_alloc(sizeof(struct epoll_event) * g_max_events);
+  /* Lets see what new interests we've got (i.e.: new Pings, etc) */
+  for (j=0; j < g_num_clients; j++) {
+    fd = -1;
+    rc = zookeeper_interest(g_zhs[j], &fd, &interest, &tv);
+    if (rc || fd == -1) {
+      if (fd != -1 && (rc == ZINVALIDSTATE || rc == ZCONNECTIONLOSS))
+        /* Note that ev must be !NULL for kernels < 2.6.9 */
+        epoll_ctl(g_epfd, EPOLL_CTL_DEL, fd, &ev);
+      continue;
+    }
+
+    ev.data.ptr = g_zhs[j];
+    ev.events = 0;
+    if (interest & ZOOKEEPER_READ)
+      ev.events |= EPOLLIN;
+
+    if (interest & ZOOKEEPER_WRITE)
+      ev.events |= EPOLLOUT;
+
+    if (epoll_ctl(g_epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
+      saved = errno;
+      if (saved != ENOENT)
+        error(EXIT_SYSTEM_CALL,
+              "epoll_ctl_mod failed with: %s ",
+              strerror(saved));
+
+      /* New FD, lets add it */
+      if (epoll_ctl(g_epfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
+        saved = errno;
+        error(EXIT_SYSTEM_CALL,
+              "epoll_ctl_add failed with: %s",
+              strerror(saved));
+      }
+    }
+  }
+}
+
+static void start_clients(void)
+{
+  int j, saved;
+
   g_zhs = (zhandle_t **)safe_alloc(sizeof(zhandle_t *) * g_num_clients);
 
   g_epfd = epoll_create(1);
@@ -161,6 +219,15 @@ static void start_clients(void)
   for (j=0; j < g_num_clients; j++) {
     g_zhs[j] = create_client(j);
   }
+}
+
+static void poll_clients(void)
+{
+  int ready, j, saved;
+  int events;
+  struct epoll_event *evlist;
+
+  evlist = (struct epoll_event *)safe_alloc(sizeof(struct epoll_event) * g_max_events);
 
   while (1) {
     ready = epoll_wait(g_epfd, evlist, g_max_events, g_wait_time);
@@ -187,40 +254,6 @@ static void start_clients(void)
          * they are not valid anymore */
       } else {
         warn("Unknown events: %d\n", evlist[j].events);
-      }
-    }
-
-    /* Lets see what new interests we've got (i.e.: new Pings, etc) */
-    for (j=0; j < g_num_clients; j++) {
-      fd = -1;
-      rc = zookeeper_interest(g_zhs[j], &fd, &interest, &tv);
-      if (rc || fd == -1) {
-        if (fd != -1 && (rc == ZINVALIDSTATE || rc == ZCONNECTIONLOSS))
-          /* Note that ev must be !NULL for kernels < 2.6.9 */
-          epoll_ctl(g_epfd, EPOLL_CTL_DEL, fd, &ev);
-        continue;
-      }
-      ev.data.ptr = g_zhs[j];
-      ev.events = 0;
-      if (interest & ZOOKEEPER_READ)
-        ev.events |= EPOLLIN;
-      if (interest & ZOOKEEPER_WRITE)
-        ev.events |= EPOLLOUT;
-
-      if (epoll_ctl(g_epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
-        int saved = errno;
-        if (saved != ENOENT)
-          error(EXIT_SYSTEM_CALL,
-                "epoll_ctl_mod failed with: %s ",
-                strerror(saved));
-
-        /* New FD, lets add it */
-        if (epoll_ctl(g_epfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
-          saved = errno;
-          error(EXIT_SYSTEM_CALL,
-                "epoll_ctl_add failed with: %s",
-                strerror(saved));
-        }
       }
     }
   }
