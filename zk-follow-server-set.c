@@ -22,6 +22,11 @@
 #include <unistd.h>
 #include <zookeeper.h>
 
+
+#ifndef EPOLLRDHUP
+#define EPOLLRDHUP 0x2000
+#endif
+
 static char *g_username_prefix = NULL;
 static char *g_serverset_path = NULL;
 static const char *g_servername = NULL;
@@ -268,11 +273,6 @@ static zhandle_t *create_client(void)
   return zh;
 }
 
-static unsigned long int tv2ms(struct timeval *a)
-{
-  return ((a->tv_sec * 1000) + (a->tv_usec / 1000));
-}
-
 static void error(int rc, const char *msgfmt, ...)
 {
   va_list ap;
@@ -332,7 +332,7 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 
   /* TODO: handle *all* state transitions */
   if (is_connected(zzh)) {
-    context = zoo_get_context(zzh);
+    context = (zh_context *)zoo_get_context(zzh);
     if (!context->following) {
       rc = zoo_aget_children(zzh,
                              g_serverset_path,
@@ -349,7 +349,7 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 
     /* Cleanup the expired session */
     zookeeper_close(zzh);
-    context = zoo_get_context(zzh);
+    context = (zh_context *)zoo_get_context(zzh);
     free(context);
 
     /* We never give up: create a new session */
