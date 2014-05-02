@@ -517,8 +517,8 @@ static void help(void)
          "  --wait-time,           -w        Set the wait time for epoll_wait()\n"
          "  --session-timeout,     -s        Set the session timeout for ZK clients\n"
          "  --switch-uid,          -u        Switch UID after forking\n"
-         "  --sleep-after-clients  -N        Sleep after starting N clients"
-         "  --sleep-in-between     -n        Seconds to sleep inbetween N started clients"
+         "  --sleep-after-clients  -N        Sleep after starting N clients\n"
+         "  --sleep-in-between     -n        Seconds to sleep inbetween N started clients\n"
          "  --watched-paths,       -z        Watched path\n",
          program_invocation_short_name);
 }
