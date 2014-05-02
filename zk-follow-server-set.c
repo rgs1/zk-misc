@@ -35,6 +35,13 @@
 #define EPOLLRDHUP 0x2000
 #endif
 
+
+typedef struct {
+  pthread_mutex_t lock;
+  zhandle_t *zh;
+} zk_conn;
+
+
 static char *g_username_prefix = NULL;
 static char *g_serverset_path = NULL;
 static const char *g_servername = NULL;
@@ -45,7 +52,7 @@ static int g_wait_time = 50;
 static int g_zk_session_timeout = 10000;
 static int g_switch_uid = 0;
 static int g_epfd;
-static zhandle_t **g_zhs;
+static zk_conn *g_zhs;
 
 
 #define EXIT_BAD_PARAMS       1
@@ -67,8 +74,8 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 static void start_clients(void);
 static void poll_clients(void);
 static void *check_interests(void *data);
-static void do_check_interests(void);
-static zhandle_t *create_client(int pos);
+static void do_check_interests(zk_conn *zkc);
+static zhandle_t *create_client(zk_conn *zkc, int pos);
 static void change_uid(int num);
 static void error(int rc, const char *msgfmt, ...);
 static void warn(const char *msgfmt, ...);
@@ -157,55 +164,61 @@ static char * safe_strdup(const char *str)
 
 static void *check_interests(void *data)
 {
+  int j;
   struct timespec req = { 0, 10 * 1000 * 1000 } ; /* 10ms */
 
   while (1) {
-    do_check_interests();
+    /* Lets see what new interests we've got (i.e.: new Pings, etc) */
+    for (j=0; j < g_num_clients; j++) {
+      do_check_interests(&g_zhs[j]);
+    }
+
     nanosleep(&req, NULL);
   }
 
   return NULL;
 }
 
-static void do_check_interests(void)
+static void do_check_interests(zk_conn *zkc)
 {
-  int j, fd, rc, interest, saved;
+  int fd, rc, interest, saved;
   struct epoll_event ev;
   struct timeval tv;
 
-  /* Lets see what new interests we've got (i.e.: new Pings, etc) */
-  for (j=0; j < g_num_clients; j++) {
-    fd = -1;
-    rc = zookeeper_interest(g_zhs[j], &fd, &interest, &tv);
-    if (rc || fd == -1) {
-      if (fd != -1 && (rc == ZINVALIDSTATE || rc == ZCONNECTIONLOSS))
-        /* Note that ev must be !NULL for kernels < 2.6.9 */
-        epoll_ctl(g_epfd, EPOLL_CTL_DEL, fd, &ev);
-      continue;
-    }
+  fd = -1;
 
-    ev.data.ptr = g_zhs[j];
-    ev.events = 0;
-    if (interest & ZOOKEEPER_READ)
-      ev.events |= EPOLLIN;
+  pthread_mutex_lock(&zkc->lock);
+  rc = zookeeper_interest(zkc->zh, &fd, &interest, &tv);
+  pthread_mutex_unlock(&zkc->lock);
 
-    if (interest & ZOOKEEPER_WRITE)
-      ev.events |= EPOLLOUT;
+  if (rc || fd == -1) {
+    if (fd != -1 && (rc == ZINVALIDSTATE || rc == ZCONNECTIONLOSS))
+      /* Note that ev must be !NULL for kernels < 2.6.9 */
+      epoll_ctl(g_epfd, EPOLL_CTL_DEL, fd, &ev);
+    return;
+  }
 
-    if (epoll_ctl(g_epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
+  ev.data.ptr = zkc;
+  ev.events = 0;
+  if (interest & ZOOKEEPER_READ)
+    ev.events |= EPOLLIN;
+
+  if (interest & ZOOKEEPER_WRITE)
+    ev.events |= EPOLLOUT;
+
+  if (epoll_ctl(g_epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
+    saved = errno;
+    if (saved != ENOENT)
+      error(EXIT_SYSTEM_CALL,
+            "epoll_ctl_mod failed with: %s ",
+            strerror(saved));
+
+    /* New FD, lets add it */
+    if (epoll_ctl(g_epfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
       saved = errno;
-      if (saved != ENOENT)
-        error(EXIT_SYSTEM_CALL,
-              "epoll_ctl_mod failed with: %s ",
-              strerror(saved));
-
-      /* New FD, lets add it */
-      if (epoll_ctl(g_epfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
-        saved = errno;
-        error(EXIT_SYSTEM_CALL,
-              "epoll_ctl_add failed with: %s",
-              strerror(saved));
-      }
+      error(EXIT_SYSTEM_CALL,
+            "epoll_ctl_add failed with: %s",
+            strerror(saved));
     }
   }
 }
@@ -214,7 +227,7 @@ static void start_clients(void)
 {
   int j, saved;
 
-  g_zhs = (zhandle_t **)safe_alloc(sizeof(zhandle_t *) * g_num_clients);
+  g_zhs = (zk_conn *)safe_alloc(sizeof(zk_conn) * g_num_clients);
 
   g_epfd = epoll_create(1);
   if (g_epfd == -1) {
@@ -223,7 +236,10 @@ static void start_clients(void)
   }
 
   for (j=0; j < g_num_clients; j++) {
-    g_zhs[j] = create_client(j);
+    if (pthread_mutex_init(&g_zhs[j].lock, 0))
+      error(EXIT_SYSTEM_CALL, "Failed to init mutex");
+    /* no need to lock here, only one thread at this point */
+    g_zhs[j].zh = create_client(&g_zhs[j], j);
   }
 }
 
@@ -232,6 +248,7 @@ static void poll_clients(void)
   int ready, j, saved;
   int events;
   struct epoll_event *evlist;
+  zk_conn *zkc;
 
   evlist = (struct epoll_event *)safe_alloc(sizeof(struct epoll_event) * g_max_events);
 
@@ -254,7 +271,14 @@ static void poll_clients(void)
           events |= ZOOKEEPER_READ;
         if (evlist[j].events & EPOLLOUT)
           events |= ZOOKEEPER_WRITE;
-        zookeeper_process((zhandle_t *)evlist[j].data.ptr, events);
+
+        /* watcher is called from here, so no need to take a lock from there */
+        zkc = (zk_conn *)evlist[j].data.ptr;
+
+        pthread_mutex_lock(&zkc->lock);
+        zookeeper_process(zkc->zh, events);
+        pthread_mutex_unlock(&zkc->lock);
+
       } else if (evlist[j].events & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) {
         /* Invalid FDs will be removed when zookeeper_interest() indicates
          * they are not valid anymore */
@@ -265,7 +289,7 @@ static void poll_clients(void)
   }
 }
 
-static zhandle_t *create_client(int pos)
+static zhandle_t *create_client(zk_conn *zkc, int pos)
 {
   int fd, rc, interest, saved;
   struct epoll_event ev;
@@ -304,7 +328,7 @@ static zhandle_t *create_client(int pos)
     ev.events |= EPOLLIN;
   if (interest & ZOOKEEPER_WRITE)
     ev.events |= EPOLLOUT;
-  ev.data.ptr = zh;
+  ev.data.ptr = zkc;
 
   if (epoll_ctl(g_epfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
     saved = errno;
@@ -395,7 +419,7 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
     free(context);
 
     /* We never give up: create a new session */
-    g_zhs[pos] = create_client(pos);
+    g_zhs[pos].zh = create_client(&g_zhs[pos], pos);
   }
 }
 
