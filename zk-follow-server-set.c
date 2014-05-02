@@ -5,7 +5,6 @@
  *
  *
  * TODO:
- *      locking around context & zhandle_t(s)
  *      graceful connect retries
  *      call zookeeper_process from its own thread
  */
@@ -275,10 +274,9 @@ static void poll_clients(void)
     if (ready == -1) {
       if (errno == EINTR)
         continue;
-      else {
-        saved = errno;
-        error(EXIT_SYSTEM_CALL, "epoll_wait failed with: %s", strerror(saved));
-      }
+
+      saved = errno;
+      error(EXIT_SYSTEM_CALL, "epoll_wait failed with: %s", strerror(saved));
     }
 
     /* Go over file descriptors that are ready */
@@ -293,6 +291,7 @@ static void poll_clients(void)
         /* watcher is called from here, so no need to take a lock from there */
         zkc = (zk_conn *)evlist[j].data.ptr;
 
+        /* add zkc to work queue */
         pthread_mutex_lock(&zkc->lock);
         zookeeper_process(zkc->zh, events);
         pthread_mutex_unlock(&zkc->lock);
