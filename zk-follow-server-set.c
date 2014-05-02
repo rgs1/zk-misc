@@ -52,6 +52,8 @@ static int g_wait_time = 50;
 static int g_zk_session_timeout = 10000;
 static int g_switch_uid = 0;
 static int g_epfd;
+static int g_sleep_after_clients = 0;
+static int g_sleep_inbetween_clients = 5;
 static zk_conn *g_zhs;
 
 
@@ -104,6 +106,8 @@ int main(int argc, char **argv)
   printf("num_procs = %d\n", g_num_procs);
   printf("wait_time = %d\n", g_wait_time);
   printf("zk_session_timeout = %d\n", g_zk_session_timeout);
+  printf("sleep_after_clients = %d\n", g_sleep_after_clients);
+  printf("sleep_inbetween_clients = %d\n", g_sleep_inbetween_clients);
 
   zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
 
@@ -226,6 +230,8 @@ static void do_check_interests(zk_conn *zkc)
 static void start_clients(void)
 {
   int j, saved;
+  int after = g_sleep_after_clients;
+  int inbetween = g_sleep_inbetween_clients;
 
   g_zhs = (zk_conn *)safe_alloc(sizeof(zk_conn) * g_num_clients);
 
@@ -240,6 +246,11 @@ static void start_clients(void)
       error(EXIT_SYSTEM_CALL, "Failed to init mutex");
     /* no need to lock here, only one thread at this point */
     g_zhs[j].zh = create_client(&g_zhs[j], j);
+
+    if (after > 0 && j > 0 && j % after == 0) {
+      warn("Sleeping for %d secs after having created %d clients", inbetween, j);
+      sleep(inbetween);
+    }
   }
 }
 
@@ -356,7 +367,7 @@ static void warn(const char *msgfmt, ...)
   va_list ap;
 
   va_start(ap, msgfmt);
-  printf(msgfmt, ap);
+  vprintf(msgfmt, ap);
   va_end(ap);
 
   printf("\n");
@@ -426,13 +437,16 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 static void parse_argv(int argc, char **argv)
 {
   static const struct option options[] = {
-    { "help",               no_argument,       NULL, 'h' },
-    { "max_events",         required_argument, NULL, 'e' },
-    { "num_clients",        required_argument, NULL, 'c' },
-    { "num_procs",          required_argument, NULL, 'p' },
-    { "wait_time",          required_argument, NULL, 'w' },
-    { "session_timeout",    required_argument, NULL, 's' },
-    { "switch_uid",         no_argument,       NULL, 'u' },
+    { "help",                 no_argument,       NULL, 'h' },
+    { "max-events",           required_argument, NULL, 'e' },
+    { "num-clients",          required_argument, NULL, 'c' },
+    { "num-procs",            required_argument, NULL, 'p' },
+    { "wait-time",            required_argument, NULL, 'w' },
+    { "session-timeout",      required_argument, NULL, 's' },
+    { "switch-uid",           no_argument,       NULL, 'u' },
+    { "sleep-after-clients",  required_argument, NULL, 'N' },
+    { "sleep-in-between",     required_argument, NULL, 'n' },
+    { "watched-paths",        required_argument, NULL, 'z' },
     {}
   };
 
@@ -441,7 +455,7 @@ static void parse_argv(int argc, char **argv)
   assert(argc >= 0);
   assert(argv);
 
-  while ((c = getopt_long(argc, argv, "+he:c:p:w:s:u:z:", options, NULL)) >= 0) {
+  while ((c = getopt_long(argc, argv, "+he:c:p:w:s:u:z:N:n:", options, NULL)) >= 0) {
     switch (c) {
     case 'h':
       help();
@@ -467,6 +481,12 @@ static void parse_argv(int argc, char **argv)
     case 'z':
       g_serverset_path = safe_strdup(optarg);
       break;
+    case 'N':
+      g_sleep_after_clients = positive_int(optarg, "sleep after clients");
+      break;
+    case 'n':
+      g_sleep_inbetween_clients = positive_int(optarg, "sleep time between clients");
+      break;
     case '?':
       help();
       exit(1);
@@ -490,13 +510,15 @@ static void help(void)
 {
   printf("%s [OPTIONS...] {ZK_SERVER}\n\n"
          "Create and maintain a given number of ZK clients.\n\n"
-         "  -h --help               Show this help\n"
-         "  -e                      Set the max number of events\n"
-         "  -c                      Set the number of clients\n"
-         "  -p                      Set the number of processes\n"
-         "  -w                      Set the wait time for epoll_wait()\n"
-         "  -s                      Set the session timeout for ZK clients\n"
-         "  -u                      Switch UID after forking\n"
-         "  -z                      ServerSet's path\n",
+         "  --help,                -h        Show this help\n"
+         "  --max-events,          -e        Set the max number of events\n"
+         "  --num-clients,         -c        Set the number of clients\n"
+         "  --num-procs,           -p        Set the number of processes\n"
+         "  --wait-time,           -w        Set the wait time for epoll_wait()\n"
+         "  --session-timeout,     -s        Set the session timeout for ZK clients\n"
+         "  --switch-uid,          -u        Switch UID after forking\n"
+         "  --sleep-after-clients  -N        Sleep after starting N clients"
+         "  --sleep-in-between     -n        Seconds to sleep inbetween N started clients"
+         "  --watched-paths,       -z        Watched path\n",
          program_invocation_short_name);
 }
