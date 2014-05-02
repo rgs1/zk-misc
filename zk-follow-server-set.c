@@ -52,6 +52,7 @@ static int g_wait_time = 50;
 static int g_zk_session_timeout = 10000;
 static int g_switch_uid = 0;
 static int g_epfd;
+static pid_t g_pid;
 static int g_sleep_after_clients = 0;
 static int g_sleep_inbetween_clients = 5;
 static zk_conn *g_zhs;
@@ -81,6 +82,8 @@ static zhandle_t *create_client(zk_conn *zkc, int pos);
 static void change_uid(int num);
 static void error(int rc, const char *msgfmt, ...);
 static void warn(const char *msgfmt, ...);
+static void info(const char *msgfmt, ...);
+static void do_log(const char *level, const char *msgfmt, va_list ap);
 
 
 int main(int argc, char **argv)
@@ -93,21 +96,23 @@ int main(int argc, char **argv)
   if (argc <= optind)
     error(EXIT_BAD_PARAMS, "Give me the hostname");
 
+  g_pid = getpid();
+
   g_servername = argv[optind];
   g_serverset_path = g_serverset_path ? g_serverset_path : DEFAULT_SERVERSET_PATH;
   g_username_prefix = g_username_prefix ? g_username_prefix : DEFAULT_USERNAME_PREFIX;
 
-  printf("Running with:\n");
-  printf("server = %s\n", g_servername);
-  printf("username_prefix = %s\n", g_username_prefix);
-  printf("server_set_path = %s\n", g_serverset_path);
-  printf("max_events = %d\n", g_max_events);
-  printf("num_clients = %d\n", g_num_clients);
-  printf("num_procs = %d\n", g_num_procs);
-  printf("wait_time = %d\n", g_wait_time);
-  printf("zk_session_timeout = %d\n", g_zk_session_timeout);
-  printf("sleep_after_clients = %d\n", g_sleep_after_clients);
-  printf("sleep_inbetween_clients = %d\n", g_sleep_inbetween_clients);
+  info("Running with:");
+  info("server = %s", g_servername);
+  info("username_prefix = %s", g_username_prefix);
+  info("server_set_path = %s", g_serverset_path);
+  info("max_events = %d", g_max_events);
+  info("num_clients = %d", g_num_clients);
+  info("num_procs = %d", g_num_procs);
+  info("wait_time = %d", g_wait_time);
+  info("zk_session_timeout = %d", g_zk_session_timeout);
+  info("sleep_after_clients = %d", g_sleep_after_clients);
+  info("sleep_inbetween_clients = %d", g_sleep_inbetween_clients);
 
   zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
 
@@ -118,6 +123,8 @@ int main(int argc, char **argv)
 
     if (!pid) {
       pthread_t tid;
+
+      g_pid = getpid();
 
       if (g_switch_uid)
         change_uid(i);
@@ -367,9 +374,29 @@ static void warn(const char *msgfmt, ...)
   va_list ap;
 
   va_start(ap, msgfmt);
-  vprintf(msgfmt, ap);
+  do_log("WARN", msgfmt, ap);
   va_end(ap);
+}
 
+static void info(const char *msgfmt, ...)
+{
+  va_list ap;
+
+  va_start(ap, msgfmt);
+  do_log("INFO", msgfmt, ap);
+  va_end(ap);
+}
+
+static void do_log(const char *level, const char *msgfmt, va_list ap)
+{
+  char buf[1024];
+  time_t t = time(NULL);
+  struct tm *p = localtime(&t);
+
+  strftime(buf, 1024, "%B %d %Y %H:%M:%S", p);
+
+  printf("[%s][PID %d][%s] ", level, g_pid, buf);
+  vprintf(msgfmt, ap);
   printf("\n");
 }
 
@@ -377,7 +404,7 @@ static void strings_completion(int rc,
         const struct String_vector *strings,
         const void *data) {
   if (strings)
-    printf("Got %d children\n", strings->count);
+    info("Got %d children", strings->count);
 }
 
 static int is_connected(zhandle_t *zh)
@@ -391,10 +418,8 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
   int rc;
   zh_context *context;
 
-  printf("type = %d\n", type);
-
   if (type != ZOO_SESSION_EVENT) {
-    printf("%d %d %s\n", type, state, path);
+    info("%d %d %s", type, state, path);
     rc = zoo_aget_children(zzh,
                            g_serverset_path,
                            1,
