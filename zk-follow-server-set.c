@@ -360,10 +360,8 @@ static void error(int rc, const char *msgfmt, ...)
   va_list ap;
 
   va_start(ap, msgfmt);
-  printf(msgfmt, ap);
+  do_log("ERROR", msgfmt, ap);
   va_end(ap);
-
-  printf("\n");
 
   exit(rc);
 }
