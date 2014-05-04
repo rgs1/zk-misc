@@ -122,6 +122,9 @@ queue * queue_new(int size)
 
 void queue_destroy(queue *q)
 {
+  assert(q);
+  assert(q->ptrs);
+  free(q->ptrs);
   free(q);
 }
 
