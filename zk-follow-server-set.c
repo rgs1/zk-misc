@@ -1,9 +1,4 @@
 /*
- * Local Variables:
- * compile-command: "gcc -Wall -I/tmp/zookeeper-libs/include/zookeeper -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lpthread -lzookeeper_st zk-follow-server-set.c -o zk-follow-server-set "
- * End:
- *
- *
  * TODO:
  *      graceful connect retries
  *      call zookeeper_process from its own thread
