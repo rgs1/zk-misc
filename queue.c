@@ -10,11 +10,9 @@
 #  define _GNU_SOURCE
 #endif
 
-#ifdef RUN_TESTS
-#include <assert.h>
-#endif
+#include "queue.h"
 
-#include <pthread.h>
+#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,29 +26,11 @@
 #define EXIT_SYSTEM_CALL      2
 
 
-typedef struct {
-  void **ptrs;
-  int head;
-  int tail;
-  int count;
-  int size;
-  pthread_mutex_t lock;
-  pthread_cond_t cond;
-} queue;
-
 /* helpers */
 static void error(int rc, const char *msgfmt, ...);
 static void do_log(const char *level, const char *msgfmt, va_list ap);
 static void info(const char *msgfmt, ...);
 static void warn(const char *msgfmt, ...);
-
-queue * queue_new(int size);
-void queue_destroy(queue *q);
-void queue_init(queue *q);
-int queue_add(queue *q, void *item);
-void * queue_remove(queue *q);
-int queue_empty(queue *q);
-int queue_count(queue *q);
 
 
 static void error(int rc, const char *msgfmt, ...)
@@ -104,23 +84,23 @@ static void * safe_alloc(size_t count)
   return ptr;
 }
 
-void queue_init(queue *q)
+void queue_init(queue_t q)
 {
   if (pthread_mutex_init(&q->lock, 0)) {
     error(EXIT_SYSTEM_CALL, "Failed to allocated memory");
   }
 }
 
-queue * queue_new(int size)
+queue_t queue_new(int size)
 {
-  queue *q = safe_alloc(sizeof(queue));
+  queue_t q = safe_alloc(sizeof(queue));
   q->ptrs = safe_alloc(sizeof(void *) * size);
   q->size = size;
   queue_init(q);
   return q;
 }
 
-void queue_destroy(queue *q)
+void queue_destroy(queue_t q)
 {
   assert(q);
   assert(q->ptrs);
@@ -128,7 +108,7 @@ void queue_destroy(queue *q)
   free(q);
 }
 
-int queue_add(queue *q, void *item)
+int queue_add(queue_t q, void *item)
 {
   int rv = 1;
 
@@ -162,13 +142,13 @@ out:
  * you need to lock the queue to call this
  * returns 1 if empty, 0 otherwise
  */
-int queue_empty(queue *q)
+int queue_empty(queue_t q)
 {
   return q->count == 0;
 }
 
 /* blocks until there's an element to remove */
-void *queue_remove(queue *q)
+void *queue_remove(queue_t q)
 {
   void *item = NULL;
 
@@ -190,7 +170,7 @@ void *queue_remove(queue *q)
   return item;
 }
 
-int queue_count(queue *q)
+int queue_count(queue_t q)
 {
   return q->count;
 }
@@ -206,7 +186,7 @@ void *producer(void *data)
 {
   char *a = "hello";
   char *b = "goodbye";
-  queue *q = (queue *)data;
+  queue_t q = (queue_t)data;
 
   info("Adding a=%s", a);
   queue_add(q, a);
@@ -225,7 +205,7 @@ void *producer(void *data)
 
 void *consumer(void *data)
 {
-  queue *q = (queue *)data;
+  queue_t q = (queue_t)data;
 
   info("removed item = %s", (char *)queue_remove(q));
   sleep(4);
@@ -238,7 +218,7 @@ void *consumer(void *data)
 
 void test_basic(void)
 {
-  queue *q = queue_new(2);
+  queue_t q = queue_new(2);
   pthread_t producer_tid, consumer_tid;
 
   pthread_create(&producer_tid, NULL, &producer, q);
@@ -256,7 +236,7 @@ void test_queue_full(void)
 {
   char *a = "hello";
   char *b = "goodbye";
-  queue *q = queue_new(1);
+  queue_t q = queue_new(1);
 
   assert(queue_add(q, a));
   info("count = %d", queue_count(q));
@@ -270,7 +250,7 @@ void test_queue_full(void)
 
 void test_more_than_size(void)
 {
-  queue *q = queue_new(3);
+  queue_t q = queue_new(3);
 
   queue_add(q, NULL);
   queue_add(q, NULL);
@@ -306,7 +286,7 @@ void test_right_value(void)
   int b = 20;
   int c = 30;
   int *item;
-  queue *q = queue_new(3);
+  queue_t q = queue_new(3);
 
   queue_add(q, &a);
   queue_add(q, &b);

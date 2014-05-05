@@ -5,7 +5,7 @@ ZK_LDFLAGS = -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lpthr
 
 SOURCES = zk-follow-server-set.c zk-epoll.c readonly.c queue.c
 OBJECTS = $(SOURCES:.c=.o)
-EXECUTABLES = $(SOURCES:.c=)
+EXECUTABLES = $(SOURCES:.c=) queue-test
 
 zk-follow-server-set: zk-follow-server-set.o
 	$(CC) $(ZK_LDFLAGS) $< -o $@
@@ -19,8 +19,11 @@ zk-epoll: zk-epoll.c
 readonly: readonly.c
 	$(CC) $(CFLAGS) $(ZK_CFLAGS) $(ZK_LDFLAGS) $< -o $@
 
-queue.o: queue.c
+queue.o: queue.c queue.h
 	$(CC) $(CFLAGS) -c $< -o $@
+
+queue-test: queue.c queue.h
+	$(CC) $(CFLAGS) -DRUN_TESTS -lpthread $< -o $@
 
 clean:
 	rm -rf $(OBJECTS) $(EXECUTABLES)
