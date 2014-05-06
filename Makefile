@@ -7,8 +7,8 @@ SOURCES = zk-follow-server-set.c zk-epoll.c readonly.c queue.c
 OBJECTS = $(SOURCES:.c=.o)
 EXECUTABLES = $(SOURCES:.c=) queue-test
 
-zk-follow-server-set: zk-follow-server-set.o
-	$(CC) $(ZK_LDFLAGS) $< -o $@
+zk-follow-server-set: zk-follow-server-set.o queue.o
+	$(CC) $(ZK_LDFLAGS) $^ -o $@
 
 zk-follow-server-set.o: zk-follow-server-set.c
 	$(CC) $(CFLAGS) $(ZK_CFLAGS) -c $< -o $@
