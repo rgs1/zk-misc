@@ -62,7 +62,7 @@ static zk_conn *g_zhs; /* state & meta-state for all zk clients */
 #define EXIT_ZOOKEEPER_CALL   3
 
 #define DEFAULT_USERNAME_PREFIX       "zk-client"
-#define DEFAULT_SERVERSET_PATH        "/twitter/service/gizmoduck/prod/gizmoduck"
+#define DEFAULT_PATH        "/"
 
 typedef struct {
   char following;
@@ -102,7 +102,7 @@ int main(int argc, char **argv)
   g_pid = getpid();
 
   g_servername = argv[optind];
-  g_serverset_path = g_serverset_path ? g_serverset_path : DEFAULT_SERVERSET_PATH;
+  g_serverset_path = g_serverset_path ? g_serverset_path : DEFAULT_PATH;
   g_username_prefix = g_username_prefix ? g_username_prefix : DEFAULT_USERNAME_PREFIX;
 
   info("Running with:");
