@@ -31,13 +31,16 @@
 #endif
 
 
+#define DEFAULT_USERNAME_PREFIX       "zk-client"
+#define DEFAULT_PATH        "/"
+
+
 typedef struct {
   int events;
   int queued;
   pthread_mutex_t lock;
   zhandle_t *zh;
-} zk_conn;
-
+} connection;
 
 static char *g_username_prefix = NULL;
 static char *g_serverset_path = NULL;
@@ -52,17 +55,13 @@ static int g_switch_uid = 0;
 static int g_epfd;
 static int g_sleep_after_clients = 0; /* call sleep(N) after this # of clnts */
 static int g_sleep_inbetween_clients = 5; /* N for the above sleep(N) */
-static zk_conn *g_zhs; /* state & meta-state for all zk clients */
-
-
-#define DEFAULT_USERNAME_PREFIX       "zk-client"
-#define DEFAULT_PATH        "/"
-
+static connection *g_zhs; /* state & meta-state for all zk clients */
 
 typedef struct {
   char following;
   int pos;
 } zh_context;
+
 
 static void help(void);
 static void parse_argv(int argc, char **argv);
@@ -72,8 +71,8 @@ static void *create_clients(void *data);
 static void *poll_clients(void *data);
 static void *check_interests(void *data);
 static void *zk_process_worker(void *data);
-static void do_check_interests(zk_conn *zkc);
-static zhandle_t *create_client(zk_conn *zkc, int pos);
+static void do_check_interests(connection *zkc);
+static zhandle_t *create_client(connection *zkc, int pos);
 
 
 int main(int argc, char **argv)
@@ -145,7 +144,7 @@ static void start_child_proc(int child_num)
     change_uid(username);
   }
 
-  g_zhs = (zk_conn *)safe_alloc(sizeof(zk_conn) * g_num_clients);
+  g_zhs = (connection *)safe_alloc(sizeof(connection) * g_num_clients);
 
   g_epfd = epoll_create(1);
   if (g_epfd == -1) {
@@ -187,11 +186,11 @@ static void start_child_proc(int child_num)
 
 static void *zk_process_worker(void *data)
 {
-  zk_conn *zkc;
+  connection *zkc;
   queue_t queue = (queue_t)data;
 
   while (1) {
-    zkc = (zk_conn *)queue_remove(queue);
+    zkc = (connection *)queue_remove(queue);
 
     /* Note:
      *
@@ -223,7 +222,7 @@ static void *check_interests(void *data)
   return NULL;
 }
 
-static void do_check_interests(zk_conn *zkc)
+static void do_check_interests(connection *zkc)
 {
   int fd, rc, interest, saved, client_ready;
   struct epoll_event ev;
@@ -307,7 +306,7 @@ static void *poll_clients(void *data)
   int events;
   struct epoll_event *evlist;
   queue_t queue = (queue_t)data;
-  zk_conn *zkc;
+  connection *zkc;
 
   evlist = (struct epoll_event *)safe_alloc(sizeof(struct epoll_event) * g_max_events);
 
@@ -330,7 +329,7 @@ static void *poll_clients(void *data)
         if (evlist[j].events & EPOLLOUT)
           events |= ZOOKEEPER_WRITE;
 
-        zkc = (zk_conn *)evlist[j].data.ptr;
+        zkc = (connection *)evlist[j].data.ptr;
 
         pthread_mutex_lock(&zkc->lock);
 
@@ -354,7 +353,7 @@ static void *poll_clients(void *data)
   return NULL;
 }
 
-static zhandle_t *create_client(zk_conn *zkc, int pos)
+static zhandle_t *create_client(connection *zkc, int pos)
 {
   int fd, rc, interest, saved;
   struct epoll_event ev;
