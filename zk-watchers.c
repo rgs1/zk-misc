@@ -40,79 +40,70 @@ typedef struct {
   int queued;
   pthread_mutex_t lock;
   zhandle_t *zh;
+  const char *server;
+  int session_timeout;
 } connection;
-
-static char *g_username_prefix = NULL;
-static char *g_serverset_path = NULL;
-static const char *g_servername = NULL;
-static int g_max_events = 100;   /* max events for epoll_wait */
-static int g_num_clients = 500;  /* clients per child process */
-static int g_num_procs = 20;   /* # of procs which'll spawn ZK clients */
-static int g_num_workers = 1;  /* # of threads to call zookeeper_process from */
-static int g_wait_time = 50;   /* wait time for epoll_wait */
-static int g_zk_session_timeout = 10000;
-static int g_switch_uid = 0;
-static int g_epfd;
-static int g_sleep_after_clients = 0; /* call sleep(N) after this # of clnts */
-static int g_sleep_inbetween_clients = 5; /* N for the above sleep(N) */
-static connection *g_zhs; /* state & meta-state for all zk clients */
 
 typedef struct {
   char following;
   int pos;
+  const char *path;
 } session_context;
+
+typedef struct {
+  char *username_prefix;
+  char *path;
+  const char *servername;
+  int max_events;   /* max events for epoll_wait */
+  int num_clients;  /* clients per child process */
+  int num_procs;   /* # of procs which'll spawn ZK clients */
+  int num_workers;  /* # of threads to call zookeeper_process from */
+  int wait_time;   /* wait time for epoll_wait */
+  int zk_session_timeout;
+  int switch_uid;
+  int sleep_after_clients; /* call sleep(N) after this # of clnts */
+  int sleep_inbetween_clients; /* N for the above sleep(N) */
+} run_params;
+
+
+static int g_epfd;
+static connection *g_zhs; /* state & meta-state for all zk clients */
 
 
 static void help(void);
-static void parse_argv(int argc, char **argv);
+static void parse_argv(int argc, char **argv, run_params *params);
+static void init_params(run_params *params);
 static void watcher(zhandle_t *zzh, int type, int state, const char *path, void *context);
-static void start_child_proc(int child_num);
+static void start_child_proc(int child_num, run_params *params);
 static void *create_clients(void *data);
 static void *poll_clients(void *data);
 static void *check_interests(void *data);
 static void *zk_process_worker(void *data);
 static void do_check_interests(connection *zkc);
-static zhandle_t *create_client(connection *zkc, int pos);
+static void create_client(connection *conn, void *context);
 
 
 int main(int argc, char **argv)
 {
   int i = 0;
   pid_t pid;
+  run_params params;
 
-  parse_argv(argc, argv);
+  init_params(&params);
 
-  if (argc <= optind)
-    error(EXIT_BAD_PARAMS, "Give me the hostname");
-
-  g_servername = argv[optind];
-  g_serverset_path = g_serverset_path ? g_serverset_path : DEFAULT_PATH;
-  g_username_prefix = g_username_prefix ? g_username_prefix : DEFAULT_USERNAME_PREFIX;
-
-  info("Running with:");
-  info("server = %s", g_servername);
-  info("username_prefix = %s", g_username_prefix);
-  info("server_set_path = %s", g_serverset_path);
-  info("max_events = %d", g_max_events);
-  info("num_clients = %d", g_num_clients);
-  info("num_procs = %d", g_num_procs);
-  info("wait_time = %d", g_wait_time);
-  info("zk_session_timeout = %d", g_zk_session_timeout);
-  info("sleep_after_clients = %d", g_sleep_after_clients);
-  info("sleep_inbetween_clients = %d", g_sleep_inbetween_clients);
-  info("num_workers = %d", g_num_workers);
+  parse_argv(argc, argv, &params);
 
   zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
 
   prctl(PR_SET_NAME, "parent", 0, 0, 0);
 
-  for (i=0; i < g_num_procs; i++) {
+  for (i=0; i < params.num_procs; i++) {
     pid = fork();
     if (pid == -1)
       error(EXIT_SYSTEM_CALL, "Ugh, couldn't fork");
 
     if (!pid) {
-      start_child_proc(i);
+      start_child_proc(i, &params);
     }
   }
 
@@ -125,26 +116,50 @@ int main(int argc, char **argv)
   return 0;
 }
 
-static void start_child_proc(int child_num)
+/* set defaults */
+static void init_params(run_params *params)
+{
+  params->username_prefix = NULL;
+  params->path = NULL;
+  params->servername = NULL;
+  params->max_events = 100;
+  params->num_clients = 500;
+  params->num_procs = 20;
+  params->num_workers = 1;
+  params->wait_time = 50;
+  params->zk_session_timeout = 10000;
+  params->switch_uid = 0;
+  params->sleep_after_clients = 0;
+  params->sleep_inbetween_clients = 5;
+}
+
+static void start_child_proc(int child_num, run_params *params)
 {
   char tname[20];
   int saved, j;
+  int num_workers = params->num_workers;
+  int num_clients = params->num_clients;
   pthread_t tid_interests, tid_poller, tid_create_clients;
-  pthread_t *tids_workers = safe_alloc(sizeof(pthread_t) * g_num_workers);
+  pthread_t *tids_workers;
   queue_t queue;
+
+  tids_workers = (pthread_t *)safe_alloc(sizeof(pthread_t) * num_workers);
 
   snprintf(tname, 20, "child[%d]", child_num);
   prctl(PR_SET_NAME, tname, 0, 0, 0);
 
-  queue = queue_new(g_num_clients);
+  queue = queue_new(num_clients);
 
-  if (g_switch_uid) {
+  /* for threads needing the params */
+  queue_set_user_data(queue, (void *)params);
+
+  if (params->switch_uid) {
     char username[64];
-    sprintf(username, "%s%d", g_username_prefix, child_num);
+    sprintf(username, "%s%d", params->username_prefix, child_num);
     change_uid(username);
   }
 
-  g_zhs = (connection *)safe_alloc(sizeof(connection) * g_num_clients);
+  g_zhs = (connection *)safe_alloc(sizeof(connection) * num_clients);
 
   g_epfd = epoll_create(1);
   if (g_epfd == -1) {
@@ -155,23 +170,23 @@ static void start_child_proc(int child_num)
   }
 
   /* prepare locks */
-  for (j=0; j < g_num_clients; j++) {
+  for (j=0; j < num_clients; j++) {
     if (pthread_mutex_init(&g_zhs[j].lock, 0)) {
       error(EXIT_SYSTEM_CALL, "Failed to init mutex");
     }
   }
 
   /* start threads */
-  pthread_create(&tid_create_clients, NULL, &create_clients, NULL);
+  pthread_create(&tid_create_clients, NULL, &create_clients, params);
   set_thread_name(tid_create_clients, "creator");
 
-  pthread_create(&tid_interests, NULL, &check_interests, NULL);
+  pthread_create(&tid_interests, NULL, &check_interests, params);
   set_thread_name(tid_interests, "interests");
 
   pthread_create(&tid_poller, NULL, &poll_clients, queue);
   set_thread_name(tid_poller, "poller");
 
-  for (j=0; j < g_num_workers; j++) {
+  for (j=0; j < num_workers; j++) {
     char thread_name[128];
 
     snprintf(thread_name, 128, "work[%d]", j);
@@ -209,10 +224,12 @@ static void *check_interests(void *data)
 {
   int j;
   struct timespec req = { 0, 10 * 1000 * 1000 } ; /* 10ms */
+  run_params *params = (run_params *)data;
+  int num_clients = params->num_clients;
 
   while (1) {
     /* Lets see what new interests we've got (i.e.: new Pings, etc) */
-    for (j=0; j < g_num_clients; j++) {
+    for (j=0; j < num_clients; j++) {
       do_check_interests(&g_zhs[j]);
     }
 
@@ -277,14 +294,22 @@ static void do_check_interests(connection *zkc)
 
 static void * create_clients(void *data)
 {
-  int j;
-  int after = g_sleep_after_clients;
-  int inbetween = g_sleep_inbetween_clients;
+  int j, after, inbetween;
+  run_params *params = (run_params *)data;
 
-  for (j=0; j < g_num_clients; j++) {
+  after = params->sleep_after_clients;
+  inbetween = params->sleep_inbetween_clients;
+
+  for (j=0; j < params->num_clients; j++) {
+    session_context *context = safe_alloc(sizeof(session_context));
+
+    context->pos = j;
+    context->path = params->path;
 
     pthread_mutex_lock(&g_zhs[j].lock);
-    g_zhs[j].zh = create_client(&g_zhs[j], j);
+    g_zhs[j].server = params->servername;
+    g_zhs[j].session_timeout = params->zk_session_timeout;
+    create_client(&g_zhs[j], context);
     pthread_mutex_unlock(&g_zhs[j].lock);
 
     if (after > 0 && j > 0 && j % after == 0) {
@@ -306,12 +331,16 @@ static void *poll_clients(void *data)
   int events;
   struct epoll_event *evlist;
   queue_t queue = (queue_t)data;
-  connection *zkc;
+  connection *conn;
+  run_params *params = (run_params *)queue_get_user_data(queue);
+  int max_events = params->max_events;
+  int wait_time = params->wait_time;
 
-  evlist = (struct epoll_event *)safe_alloc(sizeof(struct epoll_event) * g_max_events);
+  evlist = (struct epoll_event *)safe_alloc(
+      sizeof(struct epoll_event) * max_events);
 
   while (1) {
-    ready = epoll_wait(g_epfd, evlist, g_max_events, g_wait_time);
+    ready = epoll_wait(g_epfd, evlist, max_events, wait_time);
     if (ready == -1) {
       if (errno == EINTR)
         continue;
@@ -329,17 +358,17 @@ static void *poll_clients(void *data)
         if (evlist[j].events & EPOLLOUT)
           events |= ZOOKEEPER_WRITE;
 
-        zkc = (connection *)evlist[j].data.ptr;
+        conn = (connection *)evlist[j].data.ptr;
 
-        pthread_mutex_lock(&zkc->lock);
+        pthread_mutex_lock(&conn->lock);
 
-        if (!zkc->queued) {
-          zkc->events = events;
-          zkc->queued = 1;
-          queue_add(queue, (void *)zkc);
+        if (!conn->queued) {
+          conn->events = events;
+          conn->queued = 1;
+          queue_add(queue, (void *)conn);
         }
 
-        pthread_mutex_unlock(&zkc->lock);
+        pthread_mutex_unlock(&conn->lock);
 
       } else if (evlist[j].events & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) {
         /* Invalid FDs will be removed when zookeeper_interest() indicates
@@ -353,23 +382,18 @@ static void *poll_clients(void *data)
   return NULL;
 }
 
-static zhandle_t *create_client(connection *zkc, int pos)
+static void create_client(connection *conn, void *context)
 {
   int fd, rc, interest, saved;
   struct epoll_event ev;
   struct timeval tv;
   zhandle_t *zh;
-  session_context *context;
-
-  context = safe_alloc(sizeof(session_context));
-
-  context->pos = pos;
 
   /* try until we succeed */
   while (1) {
-    zh = zookeeper_init(g_servername,
+    zh = zookeeper_init(conn->server,
                         watcher,
-                        g_zk_session_timeout,
+                        conn->session_timeout,
                         0,
                         context,
                         ZOO_READONLY);
@@ -392,14 +416,14 @@ static zhandle_t *create_client(connection *zkc, int pos)
     ev.events |= EPOLLIN;
   if (interest & ZOOKEEPER_WRITE)
     ev.events |= EPOLLOUT;
-  ev.data.ptr = zkc;
+  ev.data.ptr = conn;
 
   if (epoll_ctl(g_epfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
     saved = errno;
     error(EXIT_SYSTEM_CALL, "epoll_ctl_add failed with: %s", strerror(saved));
   }
 
-  return zh;
+  conn->zh = zh;
 }
 
 /* i guess i could move console IO to another thread... */
@@ -421,12 +445,12 @@ static int is_connected(zhandle_t *zh)
 static void watcher(zhandle_t *zzh, int type, int state, const char *path, void *ctxt)
 {
   int rc;
-  session_context *context;
+  session_context *context = (session_context *)zoo_get_context(zzh);
 
   if (type != ZOO_SESSION_EVENT) {
     info("%d %d %s", type, state, path);
     rc = zoo_aget_children(zzh,
-                           g_serverset_path,
+                           context->path,
                            1,
                            strings_completion,
                            NULL);
@@ -438,10 +462,9 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 
   /* TODO: handle *all* state transitions */
   if (is_connected(zzh)) {
-    context = (session_context *)zoo_get_context(zzh);
     if (!context->following) {
       rc = zoo_aget_children(zzh,
-                             g_serverset_path,
+                             context->path,
                              1,
                              strings_completion,
                              NULL);
@@ -451,20 +474,16 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
         context->following = 1;
     }
   } else if (state == ZOO_EXPIRED_SESSION_STATE) {
-    int pos;
-
     /* Cleanup the expired session */
     zookeeper_close(zzh);
-    context = (session_context *)zoo_get_context(zzh);
-    pos = context->pos;
-    free(context);
 
     /* We never give up: create a new session */
-    g_zhs[pos].zh = create_client(&g_zhs[pos], pos);
+    context->following = 0;
+    create_client(&g_zhs[context->pos], context);
   }
 }
 
-static void parse_argv(int argc, char **argv)
+static void parse_argv(int argc, char **argv, run_params *params)
 {
   const char *short_opts = "+he:c:p:w:s:u:z:N:n:W:";
   static const struct option options[] = {
@@ -492,36 +511,36 @@ static void parse_argv(int argc, char **argv)
       help();
       exit(0);
     case 'e':
-      g_max_events = positive_int(optarg, "max events");
+      params->max_events = positive_int(optarg, "max events");
       break;
     case 'c':
-      g_num_clients = positive_int(optarg, "num clients");
+      params->num_clients = positive_int(optarg, "num clients");
       break;
     case 'p':
-      g_num_procs = positive_int(optarg, "num procs");
+      params->num_procs = positive_int(optarg, "num procs");
       break;
     case 'w':
-      g_wait_time = positive_int(optarg, "wait time");
+      params->wait_time = positive_int(optarg, "wait time");
       break;
     case 's':
-      g_zk_session_timeout = positive_int(optarg, "zk session timeout");
+      params->zk_session_timeout = positive_int(optarg, "zk session timeout");
       break;
     case 'u':
-      g_switch_uid = 1;
+      params->switch_uid = 1;
       break;
     case 'z':
-      g_serverset_path = safe_strdup(optarg);
+      params->path = safe_strdup(optarg);
       break;
     case 'N':
-      g_sleep_after_clients = positive_int(optarg, "sleep after clients");
+      params->sleep_after_clients = positive_int(optarg, "sleep after clients");
       break;
     case 'n':
-      g_sleep_inbetween_clients = positive_int(optarg,
-                                               "sleep time between clients");
+      params->sleep_inbetween_clients =
+        positive_int(optarg, "sleep time between clients");
       break;
     case 'W':
-      g_num_workers = positive_int(optarg,
-                                   "number of workers for zookeeper_process");
+      params->num_workers =
+        positive_int(optarg, "number of workers for zookeeper_process");
       break;
     case '?':
       help();
@@ -530,6 +549,29 @@ static void parse_argv(int argc, char **argv)
       error(EXIT_BAD_PARAMS, "Bad option %c\n", (char)c);
     }
   }
+
+
+  if (argc <= optind)
+    error(EXIT_BAD_PARAMS, "Give me the hostname");
+
+  params->servername = argv[optind];
+  if (!params->path)
+    params->path = DEFAULT_PATH;
+  if (!params->username_prefix)
+    params->username_prefix = DEFAULT_USERNAME_PREFIX;
+
+  info("Running with:");
+  info("server = %s", params->servername);
+  info("username_prefix = %s", params->username_prefix);
+  info("server_set_path = %s", params->path);
+  info("max_events = %d", params->max_events);
+  info("num_clients = %d", params->num_clients);
+  info("num_procs = %d", params->num_procs);
+  info("wait_time = %d", params->wait_time);
+  info("zk_session_timeout = %d", params->zk_session_timeout);
+  info("sleep_after_clients = %d", params->sleep_after_clients);
+  info("sleep_inbetween_clients = %d", params->sleep_inbetween_clients);
+  info("num_workers = %d", params->num_workers);
 }
 
 static void help(void)
