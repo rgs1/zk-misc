@@ -3,7 +3,7 @@ CFLAGS = -Wall
 ZK_CFLAGS = -I/tmp/zookeeper-libs/include/zookeeper
 ZK_LDFLAGS = -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lpthread -lzookeeper_st
 
-SOURCES = zk-watchers.c zk-epoll.c readonly.c queue.c
+SOURCES = zk-watchers.c zk-epoll.c readonly.c queue.c util.c
 OBJECTS = $(SOURCES:.c=.o) queue-test.o
 EXECUTABLES = $(SOURCES:.c=) queue-test
 
