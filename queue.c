@@ -11,6 +11,7 @@
 #endif
 
 #include "queue.h"
+#include "util.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -21,68 +22,6 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-
-#define EXIT_BAD_PARAMS       1
-#define EXIT_SYSTEM_CALL      2
-
-
-/* helpers */
-static void error(int rc, const char *msgfmt, ...);
-static void do_log(const char *level, const char *msgfmt, va_list ap);
-static void info(const char *msgfmt, ...);
-static void warn(const char *msgfmt, ...);
-
-
-static void error(int rc, const char *msgfmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, msgfmt);
-  do_log("ERROR", msgfmt, ap);
-  va_end(ap);
-
-  exit(rc);
-}
-
-static void info(const char *msgfmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, msgfmt);
-  do_log("INFO", msgfmt, ap);
-  va_end(ap);
-}
-
-static void warn(const char *msgfmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, msgfmt);
-  do_log("WARN", msgfmt, ap);
-  va_end(ap);
-}
-
-static void do_log(const char *level, const char *msgfmt, va_list ap)
-{
-  char buf[1024];
-  time_t t = time(NULL);
-  struct tm *p = localtime(&t);
-
-  strftime(buf, 1024, "%B %d %Y %H:%M:%S", p);
-
-  printf("[%s][PID %ld][%s] ", level, syscall(SYS_gettid), buf);
-  vprintf(msgfmt, ap);
-  printf("\n");
-}
-
-static void * safe_alloc(size_t count)
-{
-  void *ptr = malloc(count);
-  if (!ptr)
-    error(EXIT_SYSTEM_CALL, "Failed to allocated memory");
-  memset(ptr, 0, count);
-  return ptr;
-}
 
 void queue_init(queue_t q)
 {
@@ -173,6 +112,20 @@ void *queue_remove(queue_t q)
 int queue_count(queue_t q)
 {
   return q->count;
+}
+
+
+void queue_set_user_data(queue_t q, void *data)
+{
+  if (q->user_data)
+    info("overwriting user_data");
+
+  q->user_data = data;
+}
+
+void *queue_get_user_data(queue_t q)
+{
+  return q->user_data;
 }
 
 
