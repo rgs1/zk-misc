@@ -86,6 +86,7 @@ static void error(int rc, const char *msgfmt, ...);
 static void warn(const char *msgfmt, ...);
 static void info(const char *msgfmt, ...);
 static void do_log(const char *level, const char *msgfmt, va_list ap);
+static void set_thread_name(pthread_t thread, const char *name);
 
 
 int main(int argc, char **argv)
@@ -177,20 +178,20 @@ static void start_child_proc(int child_num)
 
   /* start threads */
   pthread_create(&tid_create_clients, NULL, &create_clients, NULL);
-  pthread_setname_np(tid_create_clients, "creator");
+  set_thread_name(tid_create_clients, "creator");
 
   pthread_create(&tid_interests, NULL, &check_interests, NULL);
-  pthread_setname_np(tid_interests, "interests");
+  set_thread_name(tid_interests, "interests");
 
   pthread_create(&tid_poller, NULL, &poll_clients, queue);
-  pthread_setname_np(tid_poller, "poller");
+  set_thread_name(tid_poller, "poller");
 
   for (j=0; j < g_num_workers; j++) {
     char thread_name[128];
 
     snprintf(thread_name, 128, "work[%d]", j);
     pthread_create(&tids_workers[j], NULL, &zk_process_worker, queue);
-    pthread_setname_np(tids_workers[j], thread_name);
+    set_thread_name(tids_workers[j], thread_name);
   }
 
   /* TODO: monitor each thread's health */
@@ -646,4 +647,11 @@ static void help(void)
          "  --num-workers          -W        # of workers to call zookeeper_process() from\n"
          "  --watched-paths,       -z        Watched path\n",
          program_invocation_short_name);
+}
+
+static void set_thread_name(pthread_t thread, const char *name)
+{
+#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 12
+  pthread_setname_np(thread, name);
+#endif
 }
