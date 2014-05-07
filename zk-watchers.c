@@ -13,7 +13,6 @@
 #include <getopt.h>
 #include <errno.h>
 #include <pthread.h>
-#include <pwd.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -21,10 +20,10 @@
 #include <sys/epoll.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
-#include <time.h>
 #include <unistd.h>
 #include <zookeeper.h>
 
+#include "util.h"
 #include "queue.h"
 
 #ifndef EPOLLRDHUP
@@ -51,28 +50,22 @@ static int g_wait_time = 50;   /* wait time for epoll_wait */
 static int g_zk_session_timeout = 10000;
 static int g_switch_uid = 0;
 static int g_epfd;
-static pid_t g_pid;
 static int g_sleep_after_clients = 0; /* call sleep(N) after this # of clnts */
 static int g_sleep_inbetween_clients = 5; /* N for the above sleep(N) */
 static zk_conn *g_zhs; /* state & meta-state for all zk clients */
 
 
-#define EXIT_BAD_PARAMS       1
-#define EXIT_SYSTEM_CALL      2
-#define EXIT_ZOOKEEPER_CALL   3
-
 #define DEFAULT_USERNAME_PREFIX       "zk-client"
 #define DEFAULT_PATH        "/"
+
 
 typedef struct {
   char following;
   int pos;
 } zh_context;
 
-static void * safe_alloc(size_t count);
 static void help(void);
 static void parse_argv(int argc, char **argv);
-static int positive_int(const char *str, const char *param_name);
 static void watcher(zhandle_t *zzh, int type, int state, const char *path, void *context);
 static void start_child_proc(int child_num);
 static void *create_clients(void *data);
@@ -81,12 +74,6 @@ static void *check_interests(void *data);
 static void *zk_process_worker(void *data);
 static void do_check_interests(zk_conn *zkc);
 static zhandle_t *create_client(zk_conn *zkc, int pos);
-static void change_uid(int num);
-static void error(int rc, const char *msgfmt, ...);
-static void warn(const char *msgfmt, ...);
-static void info(const char *msgfmt, ...);
-static void do_log(const char *level, const char *msgfmt, va_list ap);
-static void set_thread_name(pthread_t thread, const char *name);
 
 
 int main(int argc, char **argv)
@@ -98,8 +85,6 @@ int main(int argc, char **argv)
 
   if (argc <= optind)
     error(EXIT_BAD_PARAMS, "Give me the hostname");
-
-  g_pid = getpid();
 
   g_servername = argv[optind];
   g_serverset_path = g_serverset_path ? g_serverset_path : DEFAULT_PATH;
@@ -152,12 +137,13 @@ static void start_child_proc(int child_num)
   snprintf(tname, 20, "child[%d]", child_num);
   prctl(PR_SET_NAME, tname, 0, 0, 0);
 
-  g_pid = getpid();
-
   queue = queue_new(g_num_clients);
 
-  if (g_switch_uid)
-    change_uid(child_num);
+  if (g_switch_uid) {
+    char username[64];
+    sprintf(username, "%s%d", g_username_prefix, child_num);
+    change_uid(username);
+  }
 
   g_zhs = (zk_conn *)safe_alloc(sizeof(zk_conn) * g_num_clients);
 
@@ -197,38 +183,6 @@ static void start_child_proc(int child_num)
   /* TODO: monitor each thread's health */
   while (1)
     sleep(100);
-}
-
-static void change_uid(int num)
-{
-  char name[64];
-  struct passwd *passwd;
-
-  sprintf(name,
-          "%s%d",
-          g_username_prefix,
-          num);
-  passwd = getpwnam(name);
-  if (!passwd)
-    error(EXIT_SYSTEM_CALL, "Couldn't get the UID for %s", name);
-  setuid(passwd->pw_uid);
-}
-
-static void * safe_alloc(size_t count)
-{
-  void *ptr = malloc(count);
-  if (!ptr)
-    error(EXIT_SYSTEM_CALL, "Failed to allocated memory");
-  memset(ptr, 0, count);
-  return ptr;
-}
-
-static char * safe_strdup(const char *str)
-{
-  char *s = strdup(str);
-  if (!s)
-    error(EXIT_SYSTEM_CALL, "Failed to allocated memory");
-  return s;
 }
 
 static void *zk_process_worker(void *data)
@@ -449,48 +403,6 @@ static zhandle_t *create_client(zk_conn *zkc, int pos)
   return zh;
 }
 
-static void error(int rc, const char *msgfmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, msgfmt);
-  do_log("ERROR", msgfmt, ap);
-  va_end(ap);
-
-  exit(rc);
-}
-
-static void warn(const char *msgfmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, msgfmt);
-  do_log("WARN", msgfmt, ap);
-  va_end(ap);
-}
-
-static void info(const char *msgfmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, msgfmt);
-  do_log("INFO", msgfmt, ap);
-  va_end(ap);
-}
-
-static void do_log(const char *level, const char *msgfmt, va_list ap)
-{
-  char buf[1024];
-  time_t t = time(NULL);
-  struct tm *p = localtime(&t);
-
-  strftime(buf, 1024, "%B %d %Y %H:%M:%S", p);
-
-  printf("[%s][PID %d][%s] ", level, g_pid, buf);
-  vprintf(msgfmt, ap);
-  printf("\n");
-}
-
 /* i guess i could move console IO to another thread... */
 static void strings_completion(int rc,
         const struct String_vector *strings,
@@ -621,16 +533,6 @@ static void parse_argv(int argc, char **argv)
   }
 }
 
-static int positive_int(const char *str, const char *param_name)
-{
-  int ret = atoi(str);
-
-  if (ret < 0)
-    error(EXIT_BAD_PARAMS, "Bad param for %s: %d", param_name, ret);
-
-  return ret;
-}
-
 static void help(void)
 {
   printf("%s [OPTIONS...] {ZK_SERVER}\n\n"
@@ -647,11 +549,4 @@ static void help(void)
          "  --num-workers          -W        # of workers to call zookeeper_process() from\n"
          "  --watched-paths,       -z        Watched path\n",
          program_invocation_short_name);
-}
-
-static void set_thread_name(pthread_t thread, const char *name)
-{
-#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 12
-  pthread_setname_np(thread, name);
-#endif
 }

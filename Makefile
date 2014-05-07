@@ -7,7 +7,7 @@ SOURCES = zk-watchers.c zk-epoll.c readonly.c queue.c
 OBJECTS = $(SOURCES:.c=.o)
 EXECUTABLES = $(SOURCES:.c=) queue-test
 
-zk-watchers: zk-watchers.o queue.o
+zk-watchers: zk-watchers.o queue.o util.o
 	$(CC) $(ZK_LDFLAGS) $^ -o $@
 
 zk-watchers.o: zk-watchers.c
@@ -20,6 +20,9 @@ readonly: readonly.c
 	$(CC) $(CFLAGS) $(ZK_CFLAGS) $(ZK_LDFLAGS) $< -o $@
 
 queue.o: queue.c queue.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+util.o: util.c util.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 queue-test: queue.c queue.h
