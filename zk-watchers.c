@@ -60,7 +60,7 @@ static connection *g_zhs; /* state & meta-state for all zk clients */
 typedef struct {
   char following;
   int pos;
-} zh_context;
+} session_context;
 
 
 static void help(void);
@@ -359,9 +359,9 @@ static zhandle_t *create_client(connection *zkc, int pos)
   struct epoll_event ev;
   struct timeval tv;
   zhandle_t *zh;
-  zh_context *context;
+  session_context *context;
 
-  context = safe_alloc(sizeof(zh_context));
+  context = safe_alloc(sizeof(session_context));
 
   context->pos = pos;
 
@@ -421,7 +421,7 @@ static int is_connected(zhandle_t *zh)
 static void watcher(zhandle_t *zzh, int type, int state, const char *path, void *ctxt)
 {
   int rc;
-  zh_context *context;
+  session_context *context;
 
   if (type != ZOO_SESSION_EVENT) {
     info("%d %d %s", type, state, path);
@@ -438,7 +438,7 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 
   /* TODO: handle *all* state transitions */
   if (is_connected(zzh)) {
-    context = (zh_context *)zoo_get_context(zzh);
+    context = (session_context *)zoo_get_context(zzh);
     if (!context->following) {
       rc = zoo_aget_children(zzh,
                              g_serverset_path,
@@ -455,7 +455,7 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 
     /* Cleanup the expired session */
     zookeeper_close(zzh);
-    context = (zh_context *)zoo_get_context(zzh);
+    context = (session_context *)zoo_get_context(zzh);
     pos = context->pos;
     free(context);
 
