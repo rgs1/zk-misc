@@ -450,7 +450,7 @@ static void watcher(zhandle_t *zzh, int type, int state, const char *path, void 
 
 static void parse_argv(int argc, const char **argv, run_params *params)
 {
-  const char *sopts = "+he:c:p:w:s:u:z:N:n:W:";
+  const char *sopts = "+he:c:p:w:s:u:P:N:n:W:";
   static const struct option options[] = {
     { "help",                 no_argument,       NULL, 'h' },
     { "max-events",           required_argument, NULL, 'e' },
@@ -461,7 +461,7 @@ static void parse_argv(int argc, const char **argv, run_params *params)
     { "switch-uid",           no_argument,       NULL, 'u' },
     { "sleep-after-clients",  required_argument, NULL, 'N' },
     { "sleep-in-between",     required_argument, NULL, 'n' },
-    { "watched-paths",        required_argument, NULL, 'z' },
+    { "paths",                required_argument, NULL, 'P' },
     { "num-workers",          required_argument, NULL, 'W' },
     {}
   };
@@ -493,7 +493,7 @@ static void parse_argv(int argc, const char **argv, run_params *params)
     case 'u':
       params->switch_uid = 1;
       break;
-    case 'z':
+    case 'P':
       params->path = safe_strdup(optarg);
       break;
     case 'N':
@@ -550,10 +550,9 @@ static void help(void)
          "  --wait-time,           -w        Set the wait time for epoll_wait()\n"
          "  --session-timeout,     -s        Set the session timeout for ZK clients\n"
          "  --switch-uid,          -u        Switch UID after forking\n"
-         "  --sleep-after-clients  -N        Sleep after starting N clients\n"
-         "  --sleep-in-between     -n        Seconds to sleep inbetween N started clients\n"
-         "  --num-workers          -W        # of workers to call zookeeper_process() from\n"
-         "  --watched-paths,       -z        Watched path\n",
+         "  --sleep-after-clients, -N        Sleep after starting N clients\n"
+         "  --sleep-in-between,    -n        Seconds to sleep inbetween N started clients\n"
+         "  --num-workers,         -W        # of workers to call zookeeper_process() from\n"
+         "  --paths,               -P        Paths\n",
          program_invocation_short_name);
 }
-

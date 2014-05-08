@@ -3,7 +3,7 @@ CFLAGS = -Wall
 ZK_CFLAGS = -I/tmp/zookeeper-libs/include/zookeeper
 ZK_LDFLAGS = -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lpthread -lzookeeper_st
 
-SOURCES = clients.c queue.c util.c get-children-with-watch.c zk-epoll.c
+SOURCES = clients.c queue.c util.c get-children-with-watch.c create-ephemerals.c
 OBJECTS = $(SOURCES:.c=.o) queue-test.o
 EXECUTABLES = $(SOURCES:.c=) queue-test
 
@@ -28,8 +28,11 @@ get-children-with-watch.o: get-children-with-watch.c
 get-children-with-watch: clients.o queue.o util.o get-children-with-watch.o
 	$(CC) $(ZK_LDFLAGS) $^ -o $@
 
-zk-epoll: zk-epoll.c
-	$(CC) $(CFLAGS) $(ZK_CFLAGS) $(ZK_LDFLAGS) $< -o $@
+create-ephemerals.o: create-ephemerals.c
+	$(CC) $(CFLAGS) $(ZK_CFLAGS) -c $< -o $@
+
+create-ephemerals: clients.o queue.o util.o create-ephemerals.o
+	$(CC) $(CFLAGS) $(ZK_CFLAGS) $(ZK_LDFLAGS) $^ -o $@
 
 clean:
 	rm -rf $(OBJECTS) $(EXECUTABLES)
