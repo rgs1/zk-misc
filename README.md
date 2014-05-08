@@ -1,7 +1,7 @@
 Small collection of programs to test ZooKeeper's scalability
 
 
-zk-watchers
+get-children-with-watch
 ===========
 
 This prog spawns N clients, each of which will call:
@@ -17,7 +17,7 @@ among a given set of processes. For example, to create 10k clients with
 1k clients per process you can do:
 
 ```
-$ ./zk-watchers --num-clients 1000 --num-procs 10 --watched-paths / localhost:2181
+$ ./get-children-with-watch --num-clients 1000 --num-procs 10 --watched-paths / localhost:2181
 ```
 
 By default, each (child) process will start 4 (additional) threads:
@@ -32,11 +32,11 @@ By default, each (child) process will start 4 (additional) threads:
 If you want more __worker__ threads (i.e.: because of slow network), you can try:
 
 ```
-$ ./zk-watchers --num-clients 1000 --num-procs 10 --num-workers 5 --watched-paths / localhost:2181
+$ ./get-children-with-watch --num-clients 1000 --num-procs 10 --num-workers 5 --watched-paths / localhost:2181
 ```
 
 To check the full set of available pararmeters use (surprise surprise):
 
 ```
-$ ./zk-watchers --help
+$ ./get-children-with-watch --help
 ```
