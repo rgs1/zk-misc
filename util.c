@@ -99,3 +99,9 @@ void set_thread_name(pthread_t thread, const char *name)
   pthread_setname_np(thread, name);
 #endif
 }
+
+void run_test(const char *test_desc, void (*test_func) (void))
+{
+  info("Running %s", test_desc);
+  test_func();
+}

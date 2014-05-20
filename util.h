@@ -19,5 +19,6 @@ void error(int rc, const char *msgfmt, ...);
 void warn(const char *msgfmt, ...);
 void info(const char *msgfmt, ...);
 void set_thread_name(pthread_t thread, const char *name);
+void run_test(const char *test_desc, void (*test_func) (void));
 
 #endif

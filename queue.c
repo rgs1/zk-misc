@@ -26,7 +26,7 @@
 void queue_init(queue_t q)
 {
   if (pthread_mutex_init(&q->lock, 0)) {
-    error(EXIT_SYSTEM_CALL, "Failed to allocated memory");
+    error(EXIT_SYSTEM_CALL, "Failed to init mutex");
   }
 }
 
@@ -265,12 +265,6 @@ void test_right_value(void)
 
   info("count = %d", queue_count(q));
   assert(queue_count(q) == 0);
-}
-
-void run_test(const char *test_desc, void (*test_func) (void))
-{
-  info("Running %s", test_desc);
-  test_func();
 }
 
 int main(int argc, char **argv)
