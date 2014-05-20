@@ -13,6 +13,9 @@ clients.o: clients.c clients.h
 queue.o: queue.c queue.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+dict.o: dict.c dict.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 util.o: util.c util.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -20,6 +23,12 @@ queue-test.o: queue.c queue.h
 	$(CC) $(CFLAGS) -DRUN_TESTS -c $< -o $@
 
 queue-test: queue-test.o util.o
+	$(CC) $(CFLAGS) -DRUN_TESTS -lpthread $^ -o $@
+
+dict-test.o: dict.c dict.h
+	$(CC) $(CFLAGS) -DRUN_TESTS -c $< -o $@
+
+dict-test: dict-test.o util.o
 	$(CC) $(CFLAGS) -DRUN_TESTS -lpthread $^ -o $@
 
 get-children-with-watch.o: get-children-with-watch.c
