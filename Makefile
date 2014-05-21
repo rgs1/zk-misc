@@ -4,7 +4,7 @@ ZK_CFLAGS = -I/tmp/zookeeper-libs/include/zookeeper
 ZK_LDFLAGS = -L/tmp/zookeeper-libs/lib -Wl,-rpath=/tmp/zookeeper-libs/lib -lpthread -lzookeeper_st
 
 SOURCES = clients.c queue.c dict.c list.c util.c get-children-with-watch.c create-ephemerals.c
-OBJECTS = $(SOURCES:.c=.o) queue-test.o
+OBJECTS = $(SOURCES:.c=.o) queue-test.o dict-test.o list-test.o
 EXECUTABLES = $(SOURCES:.c=) queue-test dict-test list-test
 
 clients.o: clients.c clients.h
