@@ -1,5 +1,6 @@
 #include "util.h"
 
+#include <assert.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -17,9 +18,20 @@ void * safe_alloc(size_t count)
 {
   void *ptr = malloc(count);
   if (!ptr)
-    error(EXIT_SYSTEM_CALL, "Failed to allocated memory");
+    error(EXIT_SYSTEM_CALL, "Failed to allocate memory");
   memset(ptr, 0, count);
   return ptr;
+}
+
+void * safe_realloc(void *mem, size_t old_size, size_t new_size)
+{
+  assert(new_size > 0);
+  assert(new_size > old_size);
+  mem = realloc(mem, new_size);
+  if (!mem)
+    error(EXIT_SYSTEM_CALL, "Failed to allocate more memory");
+  memset(mem + old_size, 0, new_size - old_size);
+  return mem;
 }
 
 char * safe_strdup(const char *str)

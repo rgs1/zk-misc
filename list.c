@@ -4,14 +4,13 @@
 
 
 #include "list.h"
+#include "pool.h"
 #include "util.h"
 
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 
-
-#define LOCK(l)  pthread_mutex_lock(&l->lock)
-#define UNLOCK(l)  pthread_mutex_unlock(&l->lock)
 
 static void * list_remove_if_matches(list_t,
                                      int (*)(int, void *, void *),
@@ -29,8 +28,7 @@ list_t list_new(int size)
 {
   list_t l = safe_alloc(sizeof(list));
   l->head = l->tail = NULL;
-  l->mem = safe_alloc(sizeof(list_item) * size);
-  l->free = NULL;
+  l->pool = pool_new(size * sizeof(list_item), sizeof(list_item));
   l->size = size;
   list_init(l);
   return l;
@@ -38,14 +36,17 @@ list_t list_new(int size)
 
 void list_resize(list_t l, int new_size)
 {
-  
+  assert(new_size > l->size);
+
+  pool_resize(l->pool, sizeof(list_item) * new_size);
+  l->size = new_size;
 }
 
 void list_destroy(list_t l)
 {
   assert(l);
-  assert(l->mem);
-  free(l->mem);
+  assert(l->pool);
+  pool_destroy(l->pool);
   free(l);
 }
 
@@ -55,13 +56,7 @@ static list_item_t get_free_item(list_t l)
 
   assert(l->count < l->size);
 
-  if (l->mem_pos < l->size) {
-    item = &l->mem[l->mem_pos++];
-  } else {
-    item = l->free;
-    l->free = l->free->next;
-  }
-
+  item = (list_item_t)pool_get(l->pool);
   l->count++;
 
   return item;
@@ -115,28 +110,9 @@ out:
   return item;
 }
 
-list_item_t list_get_by_value(list_t l, void *value)
+void * list_get(list_t l, int pos)
 {
   list_item_t item = NULL;
-  list_item_t found = NULL;
-
-  LOCK(l);
-
-  list_for_each(item, l) {
-    if (item->value == value) {
-      found = item;
-      goto out;
-    }
-  }
-
-out:
-  UNLOCK(l);
-  return found;
-}
-
-list_item_t list_get_by_pos(list_t l, int pos)
-{
-  list_item_t item;
   int i = 0;
 
   assert(pos < l->count);
@@ -150,7 +126,7 @@ list_item_t list_get_by_pos(list_t l, int pos)
 
 out:
   UNLOCK(l);
-  return item;
+  return item ? item->value : NULL;
 }
 
 static int match_by_value(int pos, void *value, void *user_data)
@@ -212,8 +188,7 @@ out:
       prev->next = found->next;
     }
 
-    found->next = l->free;
-    l->free = found;
+    pool_put(l->pool, found);
     l->count--;
   }
   UNLOCK(l);
@@ -286,14 +261,50 @@ static void test_remove(void)
   assert(list_count(l) == 0);
 }
 
+static void test_get(void)
+{
+  list_t l = list_new(10);
+
+  list_append(l, "one");
+  list_append(l, "two");
+  list_append(l, "three");
+  info("list has %d items", list_count(l));
+  assert(list_count(l) == 3);
+
+  assert(strcmp((const char *)list_get(l, 0), "one") == 0);
+  assert(strcmp((const char *)list_get(l, 1), "two") == 0);
+  assert(strcmp((const char *)list_get(l, 2), "three") == 0);
+}
+
+static void test_resize(void)
+{
+  list_t l = list_new(2);
+
+  list_append(l, "one");
+  list_append(l, "two");
+  info("list has %d items", list_count(l));
+  assert(list_append(l, "three") == NULL);
+  assert(list_count(l) == 2);
+
+  list_resize(l, 4);
+  list_append(l, "three");
+  list_append(l, "four");
+  info("list has %d items", list_count(l));
+  assert(list_count(l) == 4);
+
+  assert(strcmp((const char *)list_get(l, 0), "one") == 0);
+  assert(strcmp((const char *)list_get(l, 1), "two") == 0);
+  assert(strcmp((const char *)list_get(l, 2), "three") == 0);
+  assert(strcmp((const char *)list_get(l, 3), "four") == 0);
+}
+
 int main(int argc, char **argv)
 {
   run_test("add", &test_add);
   run_test("no more space", &test_add_no_space);
   run_test("remove", &test_remove);
-  /* run_test("find by value", &test_get_by_value); */
-  /* run_test("find by pos", &test_get_by_pos); */
-  /* run_test("resize", &test_resize); */
+  run_test("get by pos", &test_get);
+  run_test("resize", &test_resize);
 
   return 0;
 }
