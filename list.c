@@ -141,7 +141,6 @@ void * list_remove_by_value(list_t l, void *value)
 
 static int match_by_pos(int pos, void *value, void *user_data)
 {
-  info("pos = %d", (int)(long)user_data);
   return pos == (int)(long)user_data;
 }
 
@@ -165,7 +164,6 @@ static void * list_remove_if_matches(list_t l,
   assert(l->count > 0);
 
   list_for_each(item, l) {
-    info("pos = %d", (int)(long)user_data);
     if (matcher(i, item->value, user_data)) {
       found = item;
       rv = item->value;
@@ -199,6 +197,11 @@ out:
 int list_count(list_t l)
 {
   return l->count;
+}
+
+int list_full(list_t l)
+{
+  return l->count == l->size;
 }
 
 void list_set_user_data(list_t l, void *data)

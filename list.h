@@ -35,6 +35,7 @@ void * list_get(list_t l, int pos);
 void * list_remove_by_value(list_t l, void *value);
 void * list_remove_by_pos(list_t l, int pos);
 int list_count(list_t l);
+int list_full(list_t l);
 void list_set_user_data(list_t l, void *data);
 void * list_get_user_data(list_t l);
 

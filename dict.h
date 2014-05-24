@@ -3,24 +3,20 @@
 
 #include <pthread.h>
 
+#include "list.h"
+#include "pool.h"
 
-#define DICT_NUM_KEY_COLLISIONS     10
 
 typedef struct {
   void *key;
   void *value;
-} dict_key_pair;
+} dict_key_value;
+
+typedef dict_key_value * dict_key_value_t;
 
 typedef struct {
-  dict_key_pair key_pair[DICT_NUM_KEY_COLLISIONS];
-  int count;
-  dict_key_pair *extra;
-  int extra_avail;
-  int extra_count;
-} dict_key;
-
-typedef struct {
-  dict_key *keys;
+  list_t *keys;
+  pool_t pool;
   int count;
   int size;
   int step_factor;  /* usually, the number of bytes between each key */
@@ -36,7 +32,7 @@ void dict_destroy(dict_t d);
 void dict_init(dict_t d);
 void * dict_set(dict_t d, void *key, void *value);
 void * dict_get(dict_t d, void *key);
-void * dict_remove(dict_t d, void *key);
+void * dict_unset(dict_t d, void *key);
 int dict_count(dict_t d);
 void dict_set_user_data(dict_t d, void *data);
 void * dict_get_user_data(dict_t q);

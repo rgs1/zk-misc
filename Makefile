@@ -61,7 +61,7 @@ queue-test: queue-test.o util.o
 dict-test.o: dict.c dict.h
 	$(CC) $(CFLAGS) -DRUN_TESTS -c $< -o $@
 
-dict-test: dict-test.o util.o
+dict-test: dict-test.o util.o list.o pool.o slab.o
 	$(CC) $(CFLAGS) -DRUN_TESTS -lpthread $^ -o $@
 
 list-test.o: list.c list.h

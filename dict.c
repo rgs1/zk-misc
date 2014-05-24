@@ -2,72 +2,83 @@
  * a simple, fixed size & thread-safe, dictionary
  */
 
-
-#include "dict.h"
-#include "util.h"
-
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include "dict.h"
+#include "list.h"
+#include "util.h"
+
+#define DICT_KEY_COLLISIONS     10
+
 
 void dict_init(dict_t d)
 {
-  if (pthread_mutex_init(&d->lock, 0)) {
-    error(EXIT_SYSTEM_CALL, "Failed to init mutex");
-  }
+  INIT_LOCK(d);
 }
 
 dict_t dict_new(int size)
 {
+  int i;
   dict_t d = safe_alloc(sizeof(dict));
-  d->keys = (dict_key *)safe_alloc(sizeof(dict_key) * size);
+
+  /* init lists */
+  d->keys = (list_t *)safe_alloc(sizeof(list_t) * size);
+  for (i=0; i < size; i++)
+    d->keys[i] = list_new(DICT_KEY_COLLISIONS);
+
+  d->pool = pool_new(sizeof(dict_key_value) * size, sizeof(dict_key_value));
   d->size = size;
   d->step_factor = 32;
   dict_init(d);
   return d;
 }
 
-/* TODO: free extra key_pair for each dict_key */
 void dict_destroy(dict_t d)
 {
+  int i;
+
   assert(d);
   assert(d->keys);
+
+  for (i=0; i < d->size; i++)
+    list_destroy(d->keys[i]);
+
   free(d->keys);
   free(d);
 }
 
-static dict_key * get_key(dict_t d, void *key)
+static list_t get_keys(dict_t d, void *key)
 {
   int pos = (int)(((long)key / d->step_factor) % d->size);
-  return &d->keys[pos];
+  return d->keys[pos];
 }
 
-static dict_key_pair * get_key_pair(dict_key *k, void *key)
+static dict_key_value_t get_key_value(list_t keys, void *key)
 {
+  dict_key_value_t kv;
   int i;
 
-  for (i=0; i < k->count; i++)
-    if (k->key_pair[i].key == key)
-      return &k->key_pair[i];
+  for (i=0; i < list_count(keys); i++) {
+    kv = list_get(keys, i);
+    if (kv && kv->key == key)
+      return kv;
+  }
 
   return NULL;
 }
 
-static void add_key_pair(dict_key *k, void *key, void *value)
+static void add_key_value(list_t keys, dict_key_value_t kv)
 {
-  dict_key_pair *kp;
+  if (list_full(keys))
+    list_resize(keys, list_count(keys) * 2);
+  list_append(keys, kv);
+}
 
-  if (k->count < DICT_NUM_KEY_COLLISIONS) {
-    kp = &k->key_pair[k->count++];
-  } else {
-    if (k->extra_count == k->extra_avail) {
-      /* add more space */
-      
-    }
-    kp = &k->extra[k->extra_count++];
-  }
-
-  kp->key = key;
-  kp->value = value;
+static void * remove_key_value(list_t keys, dict_key_value_t kv)
+{
+  return list_remove_by_value(keys, kv);
 }
 
 /* This returns:
@@ -78,30 +89,75 @@ static void add_key_pair(dict_key *k, void *key, void *value)
 void *dict_set(dict_t d, void *key, void *value)
 {
   void *old = NULL;
-  dict_key *k = NULL;
-  dict_key_pair *kp = NULL;
+  list_t keys = NULL;
+  dict_key_value_t kv = NULL;
 
-  pthread_mutex_lock(&d->lock);
+  LOCK(d);
 
   if (d->count == d->size)
     goto out;
 
-  k = get_key(d, key);
-  assert(k);
+  keys = get_keys(d, key);
+  assert(keys);
+  kv = get_key_value(keys, key);
 
-  kp = get_key_pair(k, key);
-
-  if (kp) {
-    old = kp->value;
-    kp->value = value;
+  if (kv) {
+    old = kv->value;
+    kv->value = value;
   } else {
-    add_key_pair(k, key, value);
+    kv = pool_get(d->pool);
+    kv->key = key;
+    old = kv->value = value;
+    add_key_value(keys, kv);
     d->count++;
   }
 
 out:
-  pthread_mutex_unlock(&d->lock);
+  UNLOCK(d);
   return old;
+}
+
+
+/* the value associated to the key, or NULL */
+void * dict_get(dict_t d, void *key)
+{
+  list_t keys = NULL;
+  dict_key_value_t kv = NULL;
+  void * value = NULL;
+
+  LOCK(d);
+
+  keys = get_keys(d, key);
+  assert(keys);
+  kv = get_key_value(keys, key);
+  if (kv)
+    value = kv->value;
+
+  UNLOCK(d);
+
+  return value;
+}
+
+void * dict_unset(dict_t d, void *key)
+{
+  list_t keys = NULL;
+  dict_key_value_t kv = NULL;
+  void * value = NULL;
+
+  LOCK(d);
+
+  keys = get_keys(d, key);
+  assert(keys);
+  kv = get_key_value(keys, key);
+  if (kv) {
+    value = kv->value;
+    remove_key_value(keys, kv);
+    d->count--;
+  }
+
+  UNLOCK(d);
+
+  return value;
 }
 
 int dict_count(dict_t d)
@@ -111,17 +167,33 @@ int dict_count(dict_t d)
 
 #ifdef RUN_TESTS
 
-static void test_add(void)
+static void test_basic(void)
 {
   dict_t d = dict_new(10);
+
   dict_set(d, "hello", "goodbye");
+
   info("dict has %d keys", dict_count(d));
   assert(dict_count(d) == 1);
+  assert(strcmp(dict_get(d, "hello"), "goodbye") == 0);
+  assert(dict_get(d, "nokey") == NULL);
+
+  dict_set(d, "hello", "updated");
+
+  info("dict has %d keys", dict_count(d));
+  assert(dict_count(d) == 1);
+  assert(strcmp(dict_get(d, "hello"), "updated") == 0);
+
+  dict_unset(d, "hello");
+
+  info("dict has %d keys", dict_count(d));
+  assert(dict_count(d) == 0);
+  assert(dict_get(d, "hello") == NULL);
 }
 
 int main(int argc, char **argv)
 {
-  run_test("add", &test_add);
+  run_test("basic: add, set, get & remove", &test_basic);
 
   return 0;
 }
