@@ -84,14 +84,12 @@ out:
   return item;
 }
 
-void * list_append(list_t l, void *value)
+static void * do_list_append(list_t l, void *value)
 {
   list_item_t item = NULL;
 
-  LOCK(l);
-
   if (l->count == l->size)
-    goto out;
+    return NULL;
 
   item = get_free_item(l);
   item->value = value;
@@ -105,9 +103,47 @@ void * list_append(list_t l, void *value)
   if (l->count == 1)
     l->head = item;
 
-out:
-  UNLOCK(l);
   return item;
+}
+
+void * list_append(list_t l, void *value)
+{
+  list_item_t item = NULL;
+
+  LOCK(l);
+
+  item = do_list_append(l, value);
+
+  UNLOCK(l);
+
+  return item;
+}
+
+static void * item_value_transform(list_item_t item)
+{
+  return item->value;
+}
+
+void list_concat(list_t left, list_t right)
+{
+  list_concat_with_transform(left, right, item_value_transform);
+}
+
+void list_concat_with_transform(list_t left,
+                                list_t right,
+                                void *(*transform)(list_item_t))
+{
+  list_item_t item = NULL;
+
+  LOCK(right);
+  LOCK(left);
+
+  list_for_each(item, right) {
+    do_list_append(left, transform(item));
+  }
+
+  UNLOCK(left);
+  UNLOCK(right);
 }
 
 void * list_get(list_t l, int pos)

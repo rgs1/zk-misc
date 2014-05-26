@@ -31,6 +31,10 @@ void list_destroy(list_t l);
 void list_init(list_t l);
 void * list_prepend(list_t l, void *value);
 void * list_append(list_t l, void *value);
+void list_concat(list_t left, list_t right);
+void list_concat_with_transform(list_t left,
+                                list_t right,
+                                void *(*transform)(list_item_t));
 void * list_get(list_t l, int pos);
 void * list_remove_by_value(list_t l, void *value);
 void * list_remove_by_pos(list_t l, int pos);

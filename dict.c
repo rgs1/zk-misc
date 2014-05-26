@@ -12,6 +12,9 @@
 
 #define DICT_KEY_COLLISIONS     10
 
+#define keys_for_each_list(dict, i, list)                \
+  for (i = 0, list = dict->keys[0]; i < dict->size; i++, list = dict->keys[i])
+
 
 void dict_init(dict_t d)
 {
@@ -160,6 +163,33 @@ void * dict_unset(dict_t d, void *key)
   return value;
 }
 
+static void * key_transform(list_item_t item)
+{
+  dict_key_value_t kv = (dict_key_value_t)item->value;
+  return kv->key;
+}
+
+list_t dict_keys(dict_t d)
+{
+  list_t keys;
+  list_t collision_list;
+  int i;
+
+  LOCK(d);
+  keys = list_new(d->count);
+  keys_for_each_list(d, i, collision_list) {
+    list_concat_with_transform(keys, collision_list, key_transform);
+  }
+  UNLOCK(d);
+
+  return keys;
+}
+
+list_t dict_values(dict_t d)
+{
+  return NULL;
+}
+
 int dict_count(dict_t d)
 {
   return d->count;
@@ -170,6 +200,7 @@ int dict_count(dict_t d)
 static void test_basic(void)
 {
   dict_t d = dict_new(10);
+  list_t keys;
 
   dict_set(d, "hello", "goodbye");
 
@@ -189,6 +220,16 @@ static void test_basic(void)
   info("dict has %d keys", dict_count(d));
   assert(dict_count(d) == 0);
   assert(dict_get(d, "hello") == NULL);
+
+  dict_set(d, "a", "1");
+  dict_set(d, "b", "2");
+  keys = dict_keys(d);
+
+  info("dict has %d keys", dict_count(d));
+  assert(strcmp(list_get(keys, 0), "a") == 0);
+  assert(strcmp(list_get(keys, 1), "b") == 0);
+
+  list_destroy(keys);
 }
 
 int main(int argc, char **argv)

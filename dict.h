@@ -32,6 +32,8 @@ void dict_destroy(dict_t d);
 void dict_init(dict_t d);
 void * dict_set(dict_t d, void *key, void *value);
 void * dict_get(dict_t d, void *key);
+list_t dict_keys(dict_t d);
+list_t dict_values(dict_t d);
 void * dict_unset(dict_t d, void *key);
 int dict_count(dict_t d);
 void dict_set_user_data(dict_t d, void *data);
