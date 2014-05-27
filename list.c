@@ -138,7 +138,7 @@ void list_concat_with_transform(list_t left,
   LOCK(right);
   LOCK(left);
 
-  list_for_each(item, right) {
+  list_for_each_item(item, right) {
     do_list_append(left, transform(item));
   }
 
@@ -155,7 +155,7 @@ void * list_get(list_t l, int pos)
 
   LOCK(l);
 
-  list_for_each(item, l) {
+  list_for_each_item(item, l) {
     if (i++ == pos)
       goto out;
   }
@@ -185,6 +185,26 @@ void * list_remove_by_pos(list_t l, int pos)
   return list_remove_if_matches(l, match_by_pos, (void *)(long)pos);
 }
 
+/* TODO: move value comparison to a matcher func */
+int list_contains(list_t l, void *value)
+{
+  int ret = 0;
+  list_item_t item;
+
+  LOCK(l);
+
+  list_for_each_item(item, l) {
+    if (item->value == value) {
+      ret = 1;
+      break;
+    }
+  }
+
+  UNLOCK(l);
+
+  return ret;
+}
+
 static void * list_remove_if_matches(list_t l,
                                      int (*matcher)(int, void *, void *),
                                      void *user_data)
@@ -199,7 +219,7 @@ static void * list_remove_if_matches(list_t l,
 
   assert(l->count > 0);
 
-  list_for_each(item, l) {
+  list_for_each_item(item, l) {
     if (matcher(i, item->value, user_data)) {
       found = item;
       rv = item->value;

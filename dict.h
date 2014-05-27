@@ -19,7 +19,8 @@ typedef struct {
   pool_t pool;
   int count;
   int size;
-  int step_factor;  /* usually, the number of bytes between each key */
+  int (*key_comparator)(void *a, void *b); /* 0 if =, -1 if a < b, 1 if a > b */
+  int (*hash_func)(void *key, int size);
   pthread_mutex_t lock;
   pthread_cond_t cond;
   void *user_data;
@@ -36,6 +37,9 @@ list_t dict_keys(dict_t d);
 list_t dict_values(dict_t d);
 void * dict_unset(dict_t d, void *key);
 int dict_count(dict_t d);
+void dict_set_key_comparator(dict_t d, int (*comparator)(void *, void *));
+void dict_set_hash_func(dict_t d, int (*hash_func)(void *, int));
+void dict_use_string_keys(dict_t d);
 void dict_set_user_data(dict_t d, void *data);
 void * dict_get_user_data(dict_t q);
 

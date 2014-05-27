@@ -38,12 +38,18 @@ void list_concat_with_transform(list_t left,
 void * list_get(list_t l, int pos);
 void * list_remove_by_value(list_t l, void *value);
 void * list_remove_by_pos(list_t l, int pos);
+int list_contains(list_t l, void *value);
 int list_count(list_t l);
 int list_full(list_t l);
 void list_set_user_data(list_t l, void *data);
 void * list_get_user_data(list_t l);
 
-#define list_for_each(item, l) \
+#define list_for_each_item(item, l)                                 \
   for (item = (l)->head; item != NULL; item = item->next)
+
+#define list_for_each(item, v, l) \
+  for (item = (l)->head, v = item ? item->value : NULL; \
+       item != NULL; \
+       item = item->next, v = item ? item->value : NULL)
 
 #endif
